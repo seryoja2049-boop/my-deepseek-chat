@@ -161,13 +161,13 @@
             <div class="form-group" style="margin-top: 12px;">
                 <label for="modelSelect">Модель ИИ:</label>
                 <select id="modelSelect">
-                    <option value="deepseek/deepseek-chat">DeepSeek V3 (Флагман — 1.2М контекст)</option>
-                    <option value="deepseek/deepseek-r1">DeepSeek R1 (Рассуждения — 1.2М контекст)</option>
+                    <option value="deepseek/deepseek-chat">DeepSeek V3 (Флагман — Блиц)</option>
+                    <option value="deepseek/deepseek-r1">DeepSeek R1 (Рассуждения — Умный)</option>
                 </select>
             </div>
             <div class="form-group" style="margin-top: 12px;">
                 <label for="systemPrompt">Системные инструкции:</label>
-                <textarea id="systemPrompt" rows="4">Ты — продвинутый ИИ-аналитик. Тщательно изучай предоставленные документы, таблицы и отчеты. Давай структурированные ответы со ссылками на пункты и статьи документов.</textarea>
+                <textarea id="systemPrompt" rows="4">Ты — продвинутый ИИ-юрист и аналитик. Тщательно изучай предоставленные выдержки из документов, кодексов и таблиц. Давай структурированные ответы со ссылками на конкретные пункты, статьи и законы.</textarea>
             </div>
         </div>
 
@@ -220,6 +220,7 @@
         let chatHistory = [];
         let uploadedFilesContent = [];
 
+        // Восстановление сохраненного ключа и настроек из памяти браузера при старте
         window.addEventListener('DOMContentLoaded', () => {
             if (localStorage.getItem('dual_key')) apiKeyInput.value = localStorage.getItem('dual_key');
             if (localStorage.getItem('dual_system')) systemPromptInput.value = localStorage.getItem('dual_system');
@@ -230,11 +231,14 @@
             localStorage.setItem('dual_key', apiKeyInput.value.trim());
             localStorage.setItem('dual_system', systemPromptInput.value.trim());
             localStorage.setItem('dual_model', modelSelect.value);
-            alert('Конфигурация сохранена!');
+            alert('Конфигурация успешно сохранена в браузере!');
         });
 
         clearChatBtn.addEventListener('click', () => {
-            chatHistory = []; uploadedFilesContent = []; filesList.innerHTML = ''; chatMessages.innerHTML = '';
+            chatHistory = []; 
+            uploadedFilesContent = []; 
+            filesList.innerHTML = ''; 
+            chatMessages.innerHTML = '';
             hideProgress();
         });
 
@@ -253,6 +257,7 @@
             progressBar.classList.remove('loading');
         }
 
+        // Чтение загружаемых файлов в оперативную память скрипта
         fileInput.addEventListener('change', async (e) => {
             const files = e.target.files;
             if(files.length === 0) return;
@@ -286,7 +291,7 @@
                         reader.readAsText(file);
                     }
                 } catch(err) {
-                    alert(`Ошибка чтения ${file.name}`);
+                    alert(`Ошибка чтения файла ${file.name}`);
                 }
                 count++;
                 showProgress(Math.floor((count / files.length) * 100));
@@ -297,7 +302,7 @@
         function addFile(name, content) {
             uploadedFilesContent.push({ name: name, content: content });
             const item = document.createElement('div');
-            item.textContent = `📄 ${name}`;
+            item.textContent = `📄 ${name} (${Math.round(content.length / 1024)} КБ текста)`;
             filesList.appendChild(item);
         }
 
@@ -343,6 +348,7 @@
             return msgDiv;
         }
 
+        // Основная функция отправки запроса с умной фильтрацией контекста
         async function handleDualAgentStream() {
             const apiKey = apiKeyInput.value.trim();
             const selectedModel = modelSelect.value;
@@ -356,44 +362,101 @@
             userInput.value = '';
 
             showAiThinkingProgress();
-            const logElement = appendMessage('system', `🤖 Подключаюсь к модели ${selectedModel}... Анализирую контекст.`, true);
+            const logElement = appendMessage('system', `🤖 Фильтрую кодекс по ключевым словам и подключаюсь к ${selectedModel}...`, true);
 
-            let documentsBody = "";
-            uploadedFilesContent.forEach(f => {
-                documentsBody += `Файл: ${f.name}\nКонтент:\n${f.content}\n===\n`;
+            // ЛОКАЛЬНЫЙ ПОИСКОВЫЙ ДВИЖОК (Вырезает из тяжелых книг только нужные статьи)
+            let relevantContext = "";
+            
+            if (uploadedFilesContent.length > 0) {
+                // Разбиваем вопрос пользователя на отдельные слова для поиска (длиной от 4 символов)
+                const searchWords = promptText.toLowerCase()
+                    .replace(/[^a-zа-яё0-9\s]/g, '')
+                    .split(/\s+/)
+                    .filter(w => w.length > 3);
+
+                // Вытаскиваем числа (например, номер статьи "622")
+                const numberMatch = promptText.match(/\d+/);
+                const searchNumber = numberMatch ? numberMatch[0] : null;
+
+                uploadedFilesContent.forEach(file => {
+                    // Режем огромный текст на отдельные абзацы
+                    const paragraphs = file.content.split('\n');
+                    let matchedParagraphs = [];
+
+                    paragraphs.forEach(p => {
+                        const pLower = p.toLowerCase();
+                        
+                        // Критерий совпадения: есть искомое число (статья) ИЛИ совпало ключевое слово
+                        let isMatch = false;
+                        if (searchNumber && pLower.includes(searchNumber)) {
+                            isMatch = true;
+                        } else if (searchWords.some(word => pLower.includes(word))) {
+                            isMatch = true;
+                        }
+                        
+                        if (isMatch && p.trim().length > 10) {
+                            matchedParagraphs.push(p.trim());
+                        }
+                    });
+
+                    // Ограничиваем выдачу первыми 40 релевантными абзацами, чтобы не перегружать API сетью
+                    if (matchedParagraphs.length > 40) {
+                        matchedParagraphs = matchedParagraphs.slice(0, 40);
+                    }
+
+                    if (matchedParagraphs.length > 0) {
+                        relevantContext += `--- Выдержки из файла: ${file.name} ---\n` + matchedParagraphs.join('\n\n') + '\n===\n';
+                    }
+                });
+            }
+
+            // Подстраховка: если по ключевым словам ничего не отфильтровалось, но файл загружен — берем первые 20 000 символов
+            if (uploadedFilesContent.length > 0 && !relevantContext.trim()) {
+                relevantContext = `--- Начальные главы документа ---\n` + uploadedFilesContent[0].content.substring(0, 20000) + `\n===`;
+            }
+
+            // Формируем чистую историю без сбоев
+            const finalMessages = [{ role: "system", content: sysPrompt }];
+            
+            chatHistory.forEach(msg => {
+                if (msg.role && msg.content) finalMessages.push(msg);
             });
 
-            const finalPrompt = [
-                { role: "system", content: sysPrompt },
-                ...chatHistory
-            ];
-
-            if (documentsBody) {
-                finalPrompt.push({ role: "user", content: `ДОКУМЕНТЫ ДЛЯ АНАЛИЗА:\n${documentsBody}\n\nЗАДАЧА: ${promptText}` });
+            // Если контекст найден, отдаем его ИИ
+            if (relevantContext) {
+                finalMessages.push({ 
+                    role: "user", 
+                    content: `ВЫДЕРЖКИ ИЗ ЗАГРУЖЕННЫХ МАТЕРИАЛОВ:\n${relevantContext}\n\nЗАДАЧА: На основе предоставленных выше выдержек подробно ответь на вопрос пользователя: ${promptText}` 
+                });
             } else {
-                finalPrompt.push({ role: "user", content: promptText });
+                finalMessages.push({ role: "user", content: promptText });
             }
 
             try {
-                const aiMessageElement = appendMessage('ai', 'Обработка документов и генерация ответа...\n\n');
+                const aiMessageElement = appendMessage('ai', 'Анализирую отфильтрованные данные и генерирую ответ...\n\n');
 
                 const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${apiKey}`,
-                        'HTTP-Referer': window.location.origin || 'http://localhost',
-                        'X-Title': 'DeepSeek Workspace'
+                        'Authorization': `Bearer ${apiKey}`
                     },
-                    body: JSON.stringify({ model: selectedModel, messages: finalPrompt, stream: true })
+                    body: JSON.stringify({ 
+                        model: selectedModel, 
+                        messages: finalMessages, 
+                        stream: true 
+                    })
                 });
 
-                if (!response.ok) throw new Error(`Ошибка сервера OpenRouter: ${response.status}`);
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Код ${response.status}: ${errorText}`);
+                }
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder('utf-8');
                 let aiResponseText = '';
-                logElement.textContent = `✅ Соединение установлено. Идет прямая трансляция ответа от ${selectedModel}...`;
+                logElement.textContent = `✅ Данные переданы успешно. Идет прямая трансляция ответа...`;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -416,19 +479,22 @@
                     }
                 }
 
+                // Включаем кнопку копирования после завершения генерации
                 const parentWrapper = aiMessageElement.parentElement;
                 const targetBtn = parentWrapper.querySelector('.copy-btn');
                 if(targetBtn) targetBtn.style.display = 'block';
 
+                // Записываем успешный диалог в историю контекста
                 chatHistory.push({ role: 'user', content: promptText });
                 chatHistory.push({ role: 'assistant', content: aiResponseText });
                 
+                // Сбрасываем список файлов на панели для следующих документов
                 uploadedFilesContent = [];
                 filesList.innerHTML = '';
                 hideProgress();
 
             } catch (error) {
-                logElement.textContent += `\n❌ Произошла ошибка: ${error.message}`;
+                logElement.textContent += `\n❌ Произошла ошибка передачи: ${error.message}`;
                 logElement.style.color = '#f7768e';
                 hideProgress();
             }
